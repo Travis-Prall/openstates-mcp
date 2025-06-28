@@ -1,0 +1,26 @@
+
+
+services:
+  # Production service
+  open-states-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: open-states-mcp:latest
+    container_name: open-states-mcp-server
+    # Run the MCP server with streamable-http transport
+    command: python -m app
+    ports:
+      - "8795:8795"
+    env_file:
+      - .env
+    environment:
+      - LOG_LEVEL=INFO
+      - API_BASE_URL=https://v3.openstates.org
+    restart: unless-stopped
+    networks:
+      - mcp-network
+
+networks:
+  mcp-network:
+    driver: bridge
