@@ -228,6 +228,10 @@ secrets/
 local/
 .local/
 
-.github
+# GitHub Copilot personal files (keep workflows but ignore personal instructions)
+.github/instructions/
+.github/prompts/
+.github/copilot-instructions.md
+
 .ruff_cache
 uv.lock
