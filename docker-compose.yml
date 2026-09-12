@@ -1,23 +1,71 @@
-
-
 services:
-  # Production service
-  open-states-mcp:
+  open-states-mcp-server:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-0.0.0}
     image: open-states-mcp:latest
     container_name: open-states-mcp-server
-    # Run the MCP server with streamable-http transport
-    command: python -m app
+    # Streamable HTTP transport; `docker run ... python -m app --transport stdio`
+    # switches to stdio.
+    command: ["python", "-m", "app"]
     ports:
-      - "8795:8795"
+      # Host and container port are the same value so MCP_PORT stays the single
+      # source of truth; override it in `.env` if the default is taken.
+      - "${MCP_PORT:-8797}:${MCP_PORT:-8797}"
+    # Optional: create a `.env` next to this file to inject OPENSTATES_API_KEY.
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
-      - LOG_LEVEL=INFO
-      - API_BASE_URL=https://v3.openstates.org
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "${MCP_PORT:-8797}"
+      MCP_PATH: /mcp/
+      MCP_TRANSPORT: streamable-http
+      MCP_STATELESS_HTTP: "false"
+      # Leave empty to disable the checks (native/dev clients) or set a comma
+      # separated allow-list for internet-facing deployments.
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
+      MCP_CORS_ORIGINS: ${MCP_CORS_ORIGINS:-}
+      OPENSTATES_LOG_LEVEL: ${OPENSTATES_LOG_LEVEL:-INFO}
+      LOG_DIR: /tmp/logs
+    # Hardening: no writes outside the tmpfs, no capabilities, no privilege
+    # escalation, and a bounded share of the host.
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
     restart: unless-stopped
+    stop_grace_period: 30s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('MCP_PORT', '8797') + '/healthz', timeout=4).read()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - mcp-network
 

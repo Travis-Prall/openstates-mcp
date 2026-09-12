@@ -23,6 +23,12 @@ README.md
 LICENSE
 CHANGELOG*
 .editorconfig
+.clinerules/
+.python-version
+.devcontainer/
+scripts/
+AGENTS.md
+OpenStates.code-workspace
 
 # IDE and editor files
 .vscode/

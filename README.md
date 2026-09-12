@@ -27,25 +27,26 @@ The OpenStates MCP Server provides comprehensive access to **state legislative d
 
 ## 🛠️ Available MCP Tools
 
-The OpenStates MCP Server provides these production-ready tools (see [app/README.md](app/README.md) for full details and parameters):
+The OpenStates MCP Server provides these production-ready tools (see [app/README.md](app/README.md) for full details and parameters). Tool names are namespaced by domain:
 
 - **Bill & Legislation Search:**
-  - `search_bills` — Search bills and legislation by query, jurisdiction, session, subject, or sponsor
-  - `get_bill_details` — Get detailed information about a specific bill
+  - `bills_search_bills` — Search bills and legislation by query, jurisdiction, session, subject, or sponsor
+  - `bills_get_bill_details` — Get detailed information about a specific bill
+  - `bills_get_bill_by_id` — Look up a bill by its OpenStates ID
 - **People & Legislators:**
-  - `search_people` — Search for legislators, governors, and other political figures
-  - `get_legislators_by_location` — Find legislators representing a specific geographic location
+  - `people_search_people` — Search for legislators, governors, and other political figures
+  - `people_get_legislators_by_location` — Find legislators representing a specific geographic location
 - **Jurisdictions & States:**
-  - `get_jurisdictions` — Get list of available jurisdictions (states, territories)
-  - `get_jurisdiction_details` — Get detailed metadata for a specific jurisdiction
+  - `jurisdictions_get_jurisdictions` — Get list of available jurisdictions (states, territories)
+  - `jurisdictions_get_jurisdiction_details` — Get detailed metadata for a specific jurisdiction
 - **Committees:**
-  - `search_committees` — Search for legislative committees by jurisdiction and chamber
-  - `get_committee_details` — Get detailed information about a specific committee
+  - `committees_search_committees` — Search for legislative committees by jurisdiction and chamber
+  - `committees_get_committee_details` — Get detailed information about a specific committee
 - **Events & Hearings:**
-  - `search_events` — Search for legislative events, hearings, and meetings
-  - `get_event_details` — Get detailed information about a specific legislative event
+  - `events_search_events` — Search for legislative events, hearings, and meetings
+  - `events_get_event_details` — Get detailed information about a specific legislative event
 - **System & Health:**
-  - `status`, `get_api_status`, `health_check`
+  - `status` — Server, platform and API-key health check
 
 See [app/README.md](app/README.md) for a full reference of all tools, parameters, and usage examples.
 
@@ -61,44 +62,60 @@ See [app/README.md](app/README.md) for a full reference of all tools, parameters
 
 ```bash
 # Clone the repository
- git clone <repository-url>
- cd OpenStates
+git clone <repository-url>
+cd OpenStates
 
 # Install dependencies
- uv sync
+uv sync
 
 # Activate the environment (optional)
- uv shell
+source .venv/bin/activate
 ```
 
 ### Environment Configuration
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root (only the API key is required):
 
 ```bash
-OPENSTATES_BASE_URL=https://v3.openstates.org
 OPENSTATES_API_KEY=your-api-key-here
-OPENSTATES_TIMEOUT=30
+
+# Optional overrides
 OPENSTATES_LOG_LEVEL=INFO
+OPENSTATES_TIMEOUT=30
 OPENSTATES_RATE_LIMIT=50
 OPENSTATES_CACHE_TTL=300
 OPENSTATES_DEBUG=false
-MCP_PORT=8785
+MCP_HOST=0.0.0.0
+MCP_PORT=8797
+MCP_PATH=/mcp/
 ```
 
 ### Running the Server
 
-The server now runs with streamable-http transport by default:
+The server runs with the streamable-http transport by default:
 
 ```bash
-uv run python -m app.server
+uv run python -m app
 ```
 
-This will start the server at:
+This starts the server at:
 
 - **Host**: `0.0.0.0` (accessible from external connections)
-- **Port**: `8785`
-- **Endpoint**: `http://localhost:8785/mcp/`
+- **Port**: `8797`
+- **Endpoint**: `http://localhost:8797/mcp/` (the slash-less `/mcp` also works)
+- **Health probe**: `http://localhost:8797/healthz`
+
+For a single local client, the stdio transport is also available:
+
+```bash
+uv run python -m app --transport stdio
+```
+
+Bind address and port can be overridden with `--host` / `--port`:
+
+```bash
+uv run python -m app --host 127.0.0.1 --port 9000
+```
 
 Or use the VS Code task: **Run MCP Server**
 
@@ -109,23 +126,56 @@ When using the streamable-http transport, clients can connect to the server usin
 ```python
 from fastmcp import Client
 
-async with Client("http://localhost:8785/mcp/") as client:
+async with Client("http://localhost:8797/mcp/") as client:
     result = await client.call_tool("status")
     print(result)
 ```
 
+### Security
+
+- `GET /healthz` is the only unauthenticated route; tool calls are authenticated
+  with `OPENSTATES_API_KEY` on the server side.
+- `MCP_ALLOWED_HOSTS` and `MCP_ALLOWED_ORIGINS` enable `Host`/`Origin` allow
+  lists (DNS-rebinding and browser-origin protection). Leave them empty for
+  local and non-browser clients; set them for internet-facing deployments.
+- CORS headers are only emitted when `MCP_CORS_ORIGINS` is set.
+
 ## 💡 Usage Examples
 
-See [app/README.md](app/README.md) for detailed tool usage and examples, including search, citation, and regulatory queries.
+See [app/README.md](app/README.md) for detailed tool usage and examples.
 
 ## 🐳 Docker Setup
 
+The image is a multi-stage build on a digest-pinned `python:3.12-slim-bookworm`,
+runs as a non-root user (`uid 1001`) and ships a `/healthz` based `HEALTHCHECK`
+plus `STOPSIGNAL SIGTERM` for graceful shutdown.
+
 ```bash
-# Production
- docker-compose up -d
-# Development with hot reload
- docker-compose --profile dev up --build
+# Build and start the production service (port 8797)
+docker compose up -d --build
+
+# Follow logs / check health
+docker compose logs -f
+docker compose exec open-states-mcp-server \
+  python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8797/healthz').read().decode())"
+
+# Stop
+docker compose down
 ```
+
+`docker-compose.yml` applies container hardening: read-only root filesystem, a
+`/tmp` tmpfs for logs (`LOG_DIR=/tmp/logs`), `cap_drop: ALL`,
+`no-new-privileges`, an init process, CPU/memory limits and a healthcheck. The
+`OPENSTATES_API_KEY` is read from the project `.env` when present.
+
+Run any other transport by overriding the command, for example stdio:
+
+```bash
+docker compose run --rm open-states-mcp-server python -m app --transport stdio
+```
+
+Helper scripts: `scripts/prod.sh {build|start|stop|restart|logs|status|shell}` and
+`scripts/dev.sh {rebuild|start|test|lint|format|logs|shell}`.
 
 ## 🧪 Testing
 
@@ -139,10 +189,10 @@ See [tests/README.md](tests/README.md) for test suite details, coverage, and tro
 ## 🔧 Development
 
 ```bash
-uv run ruff format .
-uv run ruff check .
-uv run mypy app/
-uv run pip-audit
+uv run ruff check app tests
+uv run ruff format app tests
+uv run mypy app
+uvx pip-audit
 ```
 
 ## 🚨 Troubleshooting
@@ -153,7 +203,6 @@ See [app/README.md](app/README.md) and [tests/README.md](tests/README.md) for tr
 
 - [Source Code Documentation](app/README.md)
 - [Test Documentation](tests/README.md)
-- [Project Context](context.json)
 - [OpenStates API Documentation](https://docs.openstates.org/api-v3/)
 - [FastMCP Framework](https://github.com/jlowin/fastmcp)
 - [Model Context Protocol](https://spec.modelcontextprotocol.io/)

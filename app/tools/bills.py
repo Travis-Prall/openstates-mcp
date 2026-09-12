@@ -2,16 +2,10 @@
 
 from typing import Annotated, Any
 
-from dotenv import load_dotenv
 from fastmcp import Context, FastMCP
-import httpx
-from loguru import logger
 from pydantic import Field
 
-from app.config import config
-
-# Load environment variables
-load_dotenv()
+from app.tools.common import log_info, request_json
 
 # Create the bills server
 bills_server: FastMCP[Any] = FastMCP(
@@ -21,48 +15,6 @@ bills_server: FastMCP[Any] = FastMCP(
     "It also provides detailed information about specific bills including full text, sponsors, votes, and legislative history. "
     "Use this server for tracking legislation, researching policy topics, and monitoring legislative activity across states.",
 )
-
-
-def _validate_api_key() -> str:
-    """Validate that API key is available.
-
-    Returns:
-        The OpenStates API key.
-
-    Raises:
-        ValueError: If openstates_api_key is not found.
-
-    """
-    if not config.openstates_api_key:
-        raise ValueError("OPENSTATES_API_KEY not found in environment variables")
-    return config.openstates_api_key
-
-
-async def _log_info(ctx: Context | None, message: str) -> None:
-    """Log info message to context or logger."""
-    if ctx:
-        await ctx.info(message)
-    else:
-        logger.info(message)
-
-
-async def _log_error(ctx: Context | None, message: str) -> None:
-    """Log error message to context or logger."""
-    if ctx:
-        await ctx.error(message)
-    else:
-        logger.error(message)
-
-
-async def _handle_api_error(ctx: Context | None, error: Exception) -> None:
-    """Handle API errors with appropriate logging."""
-    if isinstance(error, httpx.HTTPStatusError):
-        error_msg = f"HTTP error: {error}"
-    else:
-        error_msg = f"API error: {error}"
-
-    await _log_error(ctx, error_msg)
-    raise error
 
 
 @bills_server.tool()
@@ -161,24 +113,13 @@ async def search_bills(
     Returns:
         dict: Search results containing bills and metadata.
 
-    Raises:
-        ValueError: If OPEN_STATES_API_KEY is not found in environment variables.
-
     """
-    await _log_info(
+    await log_info(
         ctx, f"Searching bills with jurisdiction: {jurisdiction}, query: {q}"
     )
 
-    try:
-        api_key = _validate_api_key()
-    except ValueError as e:
-        await _log_error(ctx, str(e))
-        raise
+    params: dict[str, Any] = {"page": page, "per_page": min(per_page, 100)}
 
-    # Build parameters dict according to OpenAPI spec
-    params = {"page": page, "per_page": min(per_page, 100)}
-
-    # Add all parameters as per OpenAPI spec
     param_fields = {
         "jurisdiction": jurisdiction,
         "session": session,
@@ -195,35 +136,18 @@ async def search_bills(
 
     # Handle list parameters
     if identifier:
-        for item in identifier:
-            params.setdefault("identifier", []).append(item)
+        params["identifier"] = list(identifier)
     if subject:
-        for item in subject:
-            params.setdefault("subject", []).append(item)
+        params["subject"] = list(subject)
     if include:
-        for item in include:
-            params.setdefault("include", []).append(item)
+        params["include"] = list(include)
 
     # Add non-list parameters
     params.update({key: value for key, value in param_fields.items() if value})
-    headers = {"x-api-key": api_key}
 
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://v3.openstates.org/bills",
-                params=params,
-                headers=headers,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            await _log_info(ctx, f"Found {len(data.get('results', []))} bills")
-            return data
-
-    except Exception as e:
-        await _handle_api_error(ctx, e)
+    data = await request_json("bills", params=params, ctx=ctx)
+    await log_info(ctx, f"Found {len(data.get('results', []))} bills")
+    return data
 
 
 @bills_server.tool()
@@ -250,39 +174,16 @@ async def get_bill_by_id(
     Returns:
         dict: Detailed bill information including text, sponsors, votes, and history.
 
-    Raises:
-        ValueError: If OPEN_STATES_API_KEY is not found in environment variables.
-
     """
-    await _log_info(ctx, f"Getting bill by UUID: {bill_uuid}")
+    await log_info(ctx, f"Getting bill by UUID: {bill_uuid}")
 
-    try:
-        api_key = _validate_api_key()
-    except ValueError as e:
-        await _log_error(ctx, str(e))
-        raise
-
-    params = {}
+    params: dict[str, Any] = {}
     if include:
-        params["include"] = include
+        params["include"] = list(include)
 
-    headers = {"x-api-key": api_key}
-
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"https://v3.openstates.org/bills/ocd-bill/{bill_uuid}",
-                params=params,
-                headers=headers,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-
-            await _log_info(ctx, f"Successfully retrieved bill {bill_uuid}")
-            return response.json()
-
-    except Exception as e:
-        await _handle_api_error(ctx, e)
+    data = await request_json(f"bills/ocd-bill/{bill_uuid}", params=params, ctx=ctx)
+    await log_info(ctx, f"Successfully retrieved bill {bill_uuid}")
+    return data
 
 
 @bills_server.tool()
@@ -312,38 +213,17 @@ async def get_bill_details(
     Returns:
         dict: Detailed bill information including text, sponsors, votes, and history.
 
-    Raises:
-        ValueError: If OPEN_STATES_API_KEY is not found in environment variables.
-
     """
-    await _log_info(ctx, f"Getting bill details: {jurisdiction}/{session}/{bill_id}")
+    await log_info(ctx, f"Getting bill details: {jurisdiction}/{session}/{bill_id}")
 
-    try:
-        api_key = _validate_api_key()
-    except ValueError as e:
-        await _log_error(ctx, str(e))
-        raise
-
-    params = {}
+    params: dict[str, Any] = {}
     if include:
-        params["include"] = include
+        params["include"] = list(include)
 
-    headers = {"x-api-key": api_key}
-
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"https://v3.openstates.org/bills/{jurisdiction}/{session}/{bill_id}",
-                params=params,
-                headers=headers,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-
-            await _log_info(
-                ctx, f"Successfully retrieved bill {jurisdiction}/{session}/{bill_id}"
-            )
-            return response.json()
-
-    except Exception as e:
-        await _handle_api_error(ctx, e)
+    data = await request_json(
+        f"bills/{jurisdiction}/{session}/{bill_id}", params=params, ctx=ctx
+    )
+    await log_info(
+        ctx, f"Successfully retrieved bill {jurisdiction}/{session}/{bill_id}"
+    )
+    return data

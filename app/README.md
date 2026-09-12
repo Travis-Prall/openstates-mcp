@@ -1,105 +1,147 @@
-# Open## Code Architecture Overview
+# OpenStates MCP Server — Source Documentation
 
-- **`app/server.py`**: Main FastMCP server, imports all tool modules and sets up logging
-- **`app/tools/`**: Contains all MCP tool implementations:
-  - `bills.py`: Bill and legislation search tools
-  - `people.py`: Legislator and people search tools
-  - `committees.py`: Committee information tools
-  - `events.py`: Legislative events and hearings tools
-  - `jurisdictions.py`: State and jurisdiction tools
-- **`app/config.py`**: Configuration and environment variable management
-- **`app/logs/`**: Server logsServer v2.0
-
-A comprehensive Model Context Protocol (MCP) server for accessing the OpenStates API v3, providing powerful state legislative research capabilities optimized for Large Language Model (LLM) interactions.
-
-> **Latest Update (June 2025):** All MCP tools and modules are documented. Pydantic v2 compatibility, type annotations, and import structure are up-to-date. Server passes all lint checks and includes a comprehensive test suite.
+A FastMCP server that exposes the OpenStates API v3 (state legislative data) to
+LLMs. This document covers the module layout, the runtime surface (transports,
+configuration, health) and the tool reference. Project level instructions live in
+[../README.md](../README.md).
 
 ## Code Architecture Overview
 
-- **`app/server.py`**: Main FastMCP server, imports all tool modules and sets up logging
-- **`app/tools/`**: Contains all MCP tool implementations:
-  - `search.py`: Search tools (opinions, dockets, audio, people, RECAP, regulations)
-  - `get.py`: Get tools (opinion, docket, audio, court, person, cluster)
-  - `citation.py`: Citation lookup, parsing, batch, and enhanced tools
-- **`app/models.py`**: Pydantic models for data validation
-- **`app/config.py`**: Configuration and environment variable management
-- **`app/utils.py``: Utility functions (XML/JSON conversion, etc.)
-- **`app/logs/`**: Server logs
+- **`app/server.py`**: Entrypoint. Builds the sub-servers, mounts them on the root
+  FastMCP instance, creates the ASGI app (guards, CORS, `/healthz`) and runs
+  uvicorn or the stdio transport.
+- **`app/config.py`**: `pydantic-settings` configuration. Every field is settable
+  through an environment variable or the project `.env` file.
+- **`app/middleware.py`**: ASGI middleware — `OriginGuardMiddleware` (opt-in
+  `Origin` allow list) and `PathAliasMiddleware` (serves `/mcp` without a
+  redirect to the canonical `/mcp/`).
+- **`app/tools/`**: One module per data domain, each exposing its own
+  `FastMCP` server:
+  - `bills.py`: bills and legislation
+  - `people.py`: legislators and other people
+  - `committees.py`: committees
+  - `events.py`: hearings and legislative events
+  - `jurisdictions.py`: states, territories and other jurisdictions
+  - `common.py`: shared HTTP client, retry/backoff, validation and logging
+    helpers used by every tool module
+  - `logging.py`: loguru configuration
+- **`app/logs/`**: Rotating log files (`LOG_DIR` overrides the location).
+- **`tests/`**: Test suite, see [../tests/README.md](../tests/README.md).
 
-## Server Transport
+Sub-servers are mounted with `mcp.mount(...)`, so **every tool name is prefixed**
+with its module name (`bills_search_bills`, `people_search_people`, ...). The
+root server additionally exposes `status`.
 
-The server is configured to use **streamable-http** transport by default, making it accessible via HTTP at `http://localhost:8000/mcp/`. This allows:
+## Transport and Endpoints
 
-- **HTTP-based access**: Standard HTTP requests for web-based deployments
-- **External connections**: Server binds to `0.0.0.0` for network accessibility
-- **RESTful interface**: Modern HTTP transport for better integration
-- **Production ready**: Suitable for containerized and cloud deployments
+The server defaults to **streamable-http**, served by uvicorn as an ASGI app:
 
-To connect to the server programmatically:
+| Endpoint | Purpose |
+|--------------------------------|------------------------------------------------------------|
+| `http://localhost:8797/mcp/`   | MCP Streamable HTTP endpoint (canonical path) |
+| `http://localhost:8797/mcp`    | Same endpoint, alias served without a redirect |
+| `http://localhost:8797/healthz` | Unauthenticated liveness/readiness probe |
+
+To connect programmatically:
 
 ```python
 from fastmcp import Client
 
-async with Client("http://localhost:8000/mcp/") as client:
-    result = await client.call_tool("status")
+async with Client("http://localhost:8797/mcp/") as client:
+    result = await client.call_tool("jurisdictions_get_jurisdictions")
+    print(result)
 ```
 
-## Modules and Purposes
+A **stdio** transport is available for single-client, local integrations (it
+opens no HTTP listener):
 
-- **server.py**: FastMCP entrypoint, imports all tool servers
-- **tools/bills.py**: Implements search and retrieval tools for bills and legislation
-- **tools/people.py**: Implements search tools for legislators and political figures
-- **tools/committees.py**: Implements committee search and information tools
-- **tools/events.py**: Implements legislative events and hearings tools
-- **tools/jurisdictions.py**: Implements jurisdiction and state information tools
-- **config.py**: Loads environment and configures logging
+```bash
+uv run python -m app --transport stdio
+```
 
-## MCP Tools and Parameters
 
-| Tool Name                    | Parameters (all optional unless noted)                                                                 | Description                                      |
-|------------------------------|------------------------------------------------------------------------------------------------------|--------------------------------------------------|
-| search_bills                 | q, jurisdiction, session, chamber, classification, updated_since, subject, sponsor, limit, page      | Search bills and legislation                     |
-| get_bill_details             | jurisdiction (required), session (required), bill_id (required), include                            | Get detailed bill information                    |
-| search_people                | q, jurisdiction, name, org_classification, district, id, include, limit, page                       | Search legislators and political figures         |
-| get_legislators_by_location  | latitude (required), longitude (required)                                                           | Find legislators by geographic location          |
-| search_committees            | jurisdiction, classification, parent, chamber, include, limit, page                                  | Search legislative committees                    |
-| get_committee_details        | committee_id (required), include                                                                      | Get detailed committee information               |
-| search_events                | jurisdiction, deleted, before, after, require_bills, include, limit, page                           | Search legislative events and hearings           |
-| get_event_details            | event_id (required), include                                                                         | Get detailed event information                   |
-| get_jurisdictions            | classification, include, limit, page                                                                  | Get list of available jurisdictions             |
-| get_jurisdiction_details     | jurisdiction_id (required), include                                                                   | Get detailed jurisdiction information            |
-| status                       | (none)                                                                                                | System health check                              |
+
+## Configuration
+
+All settings come from environment variables or `.env` (field name in upper
+case; case insensitive). The most relevant ones:
+
+| Variable | Default | Description |
+|------------------------------|-------------------|-------------------------------------------------------|
+| `MCP_HOST` | `0.0.0.0` | HTTP bind address |
+| `MCP_PORT` | `8797` | HTTP bind port |
+| `MCP_PATH` | `/mcp/` | MCP endpoint path (slash-less form is aliased) |
+| `MCP_TRANSPORT` | `streamable-http` | `streamable-http`, `http` or `stdio` |
+| `MCP_STATELESS_HTTP` | `false` | Fresh session per request, for horizontal scaling |
+| `MCP_ALLOWED_HOSTS` | *(empty)* | Comma separated `Host` allow list (empty disables the check) |
+| `MCP_ALLOWED_ORIGINS` | *(empty)* | Comma separated `Origin` allow list (empty disables the check) |
+| `MCP_CORS_ORIGINS` | *(empty)* | Comma separated CORS origins (empty disables CORS) |
+| `LOG_DIR` | `app/logs` | Log directory; point at a writable path for read-only root filesystems |
+| `ENVIRONMENT` | `production` | `development` enables development behaviour |
+| `OPENSTATES_API_KEY` | *(none)* | Required by every API call |
+| `OPENSTATES_BASE_URL` | `https://v3.openstates.org` | API base URL |
+| `OPENSTATES_LOG_LEVEL` | `INFO` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `OPENSTATES_TIMEOUT` | `30` | Total request timeout in seconds |
+| `OPENSTATES_CONNECT_TIMEOUT` | `10` | Connection timeout in seconds |
+| `OPENSTATES_READ_TIMEOUT` | `30` | Read timeout in seconds |
+| `OPENSTATES_MAX_RETRIES` | `3` | Attempts for rate limited/transient failures |
+| `OPENSTATES_RETRY_DELAY` | `1.0` | Base delay for exponential backoff |
+| `OPENSTATES_RATE_LIMIT` | `50` | Requests per hour as documented by OpenStates |
+| `OPENSTATES_CACHE_TTL` | `300` | Cache TTL in seconds |
+
+Command line flags override `MCP_TRANSPORT`, `MCP_HOST` and `MCP_PORT`:
+
+```bash
+uv run python -m app --host 127.0.0.1 --port 9000 --transport streamable-http
+```
+
+## Health and Observability
+
+- `GET /healthz` returns `{"status": "healthy", "service": ..., "version": ...,`
+  `"transport": ..., "stateless_http": ...}` and backs the container
+  `HEALTHCHECK`.
+- The `status` tool reports process, platform and API-key state to MCP clients.
+- Logs go to `LOG_DIR/server.log` (rotating) and to stderr.
+
+## MCP Tools
+
+All parameters are optional unless marked *(required)*.
+
+| Tool Name | Parameters | Description |
+|----------------------------------------|----------------------------------------------------------------------|--------------------------------------------|
+| `bills_search_bills` | q, jurisdiction, session, chamber, classification, updated_since, subject, sponsor, limit, page | Search bills and legislation |
+| `bills_get_bill_details` | jurisdiction *(required)*, session *(required)*, bill_id *(required)*, include | Detailed bill information |
+| `bills_get_bill_by_id` | bill_id *(required)*, include | Bill lookup by OpenStates ID |
+| `people_search_people` | q, jurisdiction, name, org_classification, district, id, include, limit, page | Search legislators and political figures |
+| `people_get_legislators_by_location` | latitude *(required)*, longitude *(required)* | Legislators representing a location |
+| `committees_search_committees` | jurisdiction, classification, parent, chamber, include, limit, page | Search legislative committees |
+| `committees_get_committee_details` | committee_id *(required)*, include | Detailed committee information |
+| `events_search_events` | jurisdiction, deleted, before, after, require_bills, include, limit, page | Search legislative events and hearings |
+| `events_get_event_details` | event_id *(required)*, include | Detailed event information |
+| `jurisdictions_get_jurisdictions` | classification, include, limit, page | List available jurisdictions |
+| `jurisdictions_get_jurisdiction_details` | jurisdiction_id *(required)*, include | Detailed jurisdiction information |
+| `status` | (none) | Server and environment health check |
 
 ## Usage Examples
 
-### Search Bills and Legislation
-
 ```python
-search_bills(q="education funding", jurisdiction="ca", session="2023")
-```
+# Search legislation in California
+await client.call_tool(
+    "bills_search_bills",
+    {"q": "education funding", "jurisdiction": "ca", "session": "2023"},
+)
 
-### Get Specific Bill Details
+# Detailed bill lookup
+await client.call_tool(
+    "bills_get_bill_details",
+    {"jurisdiction": "ny", "session": "2023", "bill_id": "A1234"},
+)
 
-```python
-get_bill_details(jurisdiction="ny", session="2023", bill_id="A1234")
-```
-
-### Search Legislators
-
-```python
-search_people(name="Smith", jurisdiction="tx")
-```
-
-### Find Legislators by Location
-
-```python
-get_legislators_by_location(latitude=40.7128, longitude=-74.0060)
-```
-
-### Search Legislative Committees
-
-```python
-search_committees(jurisdiction="fl", chamber="upper")
+# Legislators for a location
+await client.call_tool(
+    "people_get_legislators_by_location",
+    {"latitude": 40.7128, "longitude": -74.0060},
+)
 ```
 
 ## Common Use Cases
@@ -114,5 +156,5 @@ search_committees(jurisdiction="fl", chamber="upper")
 ## See Also
 
 - [../README.md](../README.md) — Main project documentation
-- [tests/README.md](../tests/README.md) — Test suite documentation
-- [context.json](../context.json) — Project context metadata
+- [../tests/README.md](../tests/README.md) — Test suite documentation
+- [OpenStates API v3 documentation](https://v3.openstates.org/docs/)

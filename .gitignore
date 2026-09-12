@@ -235,3 +235,4 @@ local/
 
 .ruff_cache
 uv.lock
+.clinerules
