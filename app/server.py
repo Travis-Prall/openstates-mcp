@@ -316,6 +316,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="openstates-mcp",
         description="Run the OpenStates MCP server.",
+        epilog="Support this project: https://www.buymeacoffee.com/travisprall",
     )
     parser.add_argument(
         "--transport",

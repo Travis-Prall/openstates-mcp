@@ -1,5 +1,7 @@
 # OpenStates MCP Server
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-FFDD00?style=flat-square&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/travisprall)
+
 A Model Context Protocol (MCP) server that provides LLM-friendly access to state legislative data through the OpenStates API v3. This server enables searching and retrieving bills, legislators, committees, events, and legislative sessions for comprehensive state-level political and legislative research.
 
 ## 🎯 Purpose
@@ -206,6 +208,16 @@ See [app/README.md](app/README.md) and [tests/README.md](tests/README.md) for tr
 - [OpenStates API Documentation](https://docs.openstates.org/api-v3/)
 - [FastMCP Framework](https://github.com/jlowin/fastmcp)
 - [Model Context Protocol](https://spec.modelcontextprotocol.io/)
+
+## ☕ Support
+
+If this project saves you time, consider [buying me a coffee](https://www.buymeacoffee.com/travisprall) or [sponsoring me on GitHub](https://github.com/sponsors/travisprall). Donations fund maintenance, bug fixes, and new features, and are always optional.
+
+Questions, ideas, or bug reports? [Open an issue](https://github.com/Travis-Prall/openstates-mcp/issues).
+
+## 📄 License
+
+Copyright © 2025 travisprall. Licensed under the [PolyForm Noncommercial 1.0.0 license](LICENSE.md).
 
 ---
 
